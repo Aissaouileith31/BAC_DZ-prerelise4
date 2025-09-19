@@ -1,0 +1,90 @@
+name: Build Flet APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+            openjdk-17-jdk \
+            git \
+            unzip \
+            zip \
+            libncurses5 \
+            libstdc++6 \
+            zlib1g-dev \
+            ccache
+
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install buildozer cython virtualenv
+        # Install your app dependencies if you have requirements.txt
+        if [ -f "requirements.txt" ]; then
+            pip install -r requirements.txt
+        fi
+
+    - name: Initialize Buildozer
+      run: |
+        buildozer init || true
+        # Create minimal buildozer.spec if it doesn't exist
+        if [ ! -f "buildozer.spec" ]; then
+            cat > buildozer.spec << EOL
+[app]
+title = My Flet App
+package.name = myfletapp
+package.domain = org.example
+source.dir = .
+source.include_exts = py,png,jpg,kv,atlas,txt
+version = 0.1
+requirements = flet>=0.22.0,pillow
+orientation = portrait
+android.api = 33
+android.minapi = 21
+android.ndk = 25b
+EOL
+        fi
+
+    - name: Build APK (Debug)
+      run: |
+        # Set timeouts and retry for buildozer
+        timeout 1800 buildozer -v android debug || echo "Build may have taken longer than expected"
+        
+    - name: List build artifacts
+      run: |
+        ls -la bin/ || echo "No bin directory found"
+
+    - name: Upload APK artifact
+      if: success() || failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: flet-app-apk
+        path: bin/*.apk
+        if-no-files-found: warn
+
+    - name: Show build logs on failure
+      if: failure()
+      run: |
+        echo "=== Build Logs ==="
+        if [ -f ".buildozer/android/platform/build-armeabi-v7a/dockerbuild.log" ]; then
+            tail -100 .buildozer/android/platform/build-armeabi-v7a/dockerbuild.log
+        fi
+        echo "=== Buildozer Debug ==="
+        buildozer android debug 2>&1 | tail -50
